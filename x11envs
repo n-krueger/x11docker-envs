@@ -1,0 +1,138 @@
+#!/usr/bin/env python3
+
+import argparse
+from collections import defaultdict
+import glob
+import json
+import os
+import shutil
+import subprocess
+import sys
+from typing import DefaultDict, Dict, List, Optional, Set, Union
+
+X11DOCKER_PRESET_DIR = "~/.config/x11docker/preset"
+
+Env = Dict[str, str]
+EnvWithInstallInfo = Dict[str, Optional[Union[str, bool]]]
+
+def find(function, iterable):
+    return next((x for x in iterable if function(x)), None)
+
+def get_available_envs(env_repository_dir: str) -> List[Env]:
+    envs = []
+
+    for env_file_dir in glob.glob(f"{env_repository_dir}/x11env*/*"):
+        with open(os.path.join(env_file_dir, "env.json"), "r") as env_file, open(os.path.join(env_file_dir, "Dockerfile"), "r") as dockerfile:
+            env = json.loads(env_file.read())
+            env["dockerfile"] = dockerfile.read()
+            envs.append(env)
+
+    return envs
+
+def get_installed_presets(preset_installation_dir: str) -> Set[str]:
+    return {x for x in os.listdir(preset_installation_dir) if x.startswith("x11env")}
+
+def get_installed_images(docker: str) -> Set[str]:
+    completed_process = subprocess.run(
+        [docker, "image", "ls", "--format={{json .}}"],
+        check=True,
+        capture_output=True,
+        encoding="utf-8",
+    )
+    images = [json.loads(x) for x in completed_process.stdout.splitlines()]
+    env_names = {f"{image['Repository']}:{image['Tag']}" for image in images}
+
+    return env_names
+
+def get_envs_with_install_info(envs: List[Env], presets: List[str], images: List[str]) -> Dict[str, EnvWithInstallInfo]:
+    envs_with_install_info = [
+        {
+            **env,
+            "preset_installed": env["name"] in presets,
+            "image_installed": env["name"] in images,
+        }
+        for env in envs
+    ]
+
+    return envs_with_install_info
+
+def print_env_list(envs: List[EnvWithInstallInfo]) -> None:
+    max_env_length = max(len(env["name"]) for env in envs)
+    row_format = "{:<"+str(max_env_length)+"} {:<10} {:<10}"
+    print(row_format.format("ENV", "PRESET", "IMAGE"))
+    for env in envs:
+        print(row_format.format(
+            env["name"],
+            "x" if env["preset_installed"] else "",
+            "x" if env["image_installed"] else "",
+        ))
+
+def install_env(preset_installation_dir: str, docker: str, envs: List[EnvWithInstallInfo], env_name: str) -> None:
+    def install_env_preset(env: EnvWithInstallInfo) -> None:
+        with open(os.path.join(preset_installation_dir, env["name"]), "w") as preset_file:
+            preset_file.writelines(env["preset"])
+
+    def install_env_image(env: EnvWithInstallInfo) -> None:
+        if env["base_env"] is not None:
+            base_env = find(lambda x: x["name"] == env["base_env"], envs)
+            if not base_env["image_installed"]:
+                install_env_image(base_env)
+
+        completed_process = subprocess.run(
+            [docker, "build", "-t", env["name"], "-"],
+            input=env["dockerfile"],
+            check=True,
+            encoding="utf-8",
+            env={**os.environ, "DOCKER_BUILDKIT": "1"},
+        )
+
+    env_to_install = find(lambda env: env["name"] == env_name, envs)
+
+    if not env_to_install["preset_installed"]:
+        install_env_preset(env_to_install)
+    if not env_to_install["image_installed"]:
+        install_env_image(env_to_install)
+
+def main():
+    docker = shutil.which("docker")
+    if not docker:
+        sys.exit("'docker' not found in PATH, please install docker")
+    x11docker = shutil.which("x11docker")
+    if not x11docker:
+        sys.exit("'x11docker' not found in PATH, please install x11docker: https://github.com/mviereck/x11docker")
+    env_repository_dir = os.path.dirname(os.path.abspath(__file__))
+    preset_installation_dir = os.path.expanduser(X11DOCKER_PRESET_DIR)
+    
+    available_envs = get_available_envs(env_repository_dir)
+    installed_presets = get_installed_presets(preset_installation_dir)
+    installed_images = get_installed_images(docker)
+    envs_with_install_info = get_envs_with_install_info(available_envs, installed_presets, installed_images)
+
+    root_parser = argparse.ArgumentParser()
+    root_parser.set_defaults(func=lambda args: root_parser.print_help())
+
+    subparsers = root_parser.add_subparsers(title='subcommands')
+
+    list_parser = subparsers.add_parser("list")
+    list_parser.add_argument("list_choice", choices=["available", "installed"])
+    def handle_list(args):
+        if args.list_choice == "available":
+            print_env_list(envs_with_install_info)
+        else:
+            print_env_list([env for env in envs_with_install_info if env["preset_installed"] or env["image_installed"]])
+    list_parser.set_defaults(func=handle_list)
+
+    install_parser = subparsers.add_parser("install")
+    install_parser.add_argument("install_name")
+    install_parser.set_defaults(func=lambda args: install_env(
+        preset_installation_dir=preset_installation_dir,
+        docker=docker,
+        envs=envs_with_install_info,
+        env_name=args.install_name,
+    ))
+
+    args = root_parser.parse_args()
+    args.func(args)
+
+if __name__ == "__main__":
+    main()
