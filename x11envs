@@ -93,6 +93,25 @@ def install_env(preset_installation_dir: str, docker: str, envs: List[EnvWithIns
     if not env_to_install["image_installed"]:
         install_env_image(env_to_install)
 
+def remove_env(preset_installation_dir: str, docker: str, envs: List[EnvWithInstallInfo], env_name: str) -> None:
+    def remove_env_preset(env: EnvWithInstallInfo) -> None:
+        os.remove(os.path.join(preset_installation_dir, env["name"]))
+
+    def remove_env_image(env: EnvWithInstallInfo) -> None:
+        completed_process = subprocess.run(
+            [docker, "image", "rm", env["name"]],
+            check=True,
+            capture_output=True,
+            encoding="utf-8",
+        )
+    
+    env_to_remove = find(lambda env: env["name"] == env_name, envs)
+
+    if env_to_remove["preset_installed"]:
+        remove_env_preset(env_to_remove)
+    if env_to_remove["image_installed"]:
+        remove_env_image(env_to_remove)
+
 def main():
     docker = shutil.which("docker")
     if not docker:
@@ -129,6 +148,15 @@ def main():
         docker=docker,
         envs=envs_with_install_info,
         env_name=args.install_name,
+    ))
+
+    remove_parser = subparsers.add_parser("remove")
+    remove_parser.add_argument("remove_name")
+    remove_parser.set_defaults(func=lambda args: remove_env(
+        preset_installation_dir=preset_installation_dir,
+        docker=docker,
+        envs=envs_with_install_info,
+        env_name=args.remove_name,
     ))
 
     args = root_parser.parse_args()
