@@ -1,9 +1,5 @@
 FROM ros:melodic-ros-base-bionic
 
-# ros:melodic-ros-base-bionic understandably does not include the full desktop package
-RUN apt-get update && apt-get install -y \
-    ros-melodic-desktop-full
-
 # XFCE desktop setup taken from https://github.com/mviereck/dockerfile-x11docker-xfce
 RUN apt-get update && apt-mark hold iptables && \
     env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
@@ -49,3 +45,7 @@ RUN apt-get update && apt-mark hold iptables && \
     sed -i 's%<property name="ThemeName" type="string" value="Xfce"/>%<property name="ThemeName" type="string" value="Raleigh"/>%' /etc/xdg/xfce4/xfconf/xfce-perchannel-xml/xsettings.xml
 
 CMD ["startxfce4"]
+
+# ros:melodic-ros-base-bionic understandably does not include the full desktop package
+RUN apt-get update && apt-get install -y \
+    ros-melodic-desktop-full
