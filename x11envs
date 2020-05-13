@@ -11,9 +11,12 @@ import sys
 from typing import DefaultDict, Dict, List, Optional, Set, Union
 
 X11DOCKER_PRESET_DIR = "~/.config/x11docker/preset"
+CONFIG_DIR = "~/.config/x11envs"
+ADDONS_CONFIG_DIR = os.path.join(CONFIG_DIR, "addons")
 
 Env = Dict[str, str]
 EnvWithInstallInfo = Dict[str, Optional[Union[str, bool]]]
+Addon = Dict[str, str]
 
 def find(function, iterable):
     return next((x for x in iterable if function(x)), None)
@@ -44,12 +47,18 @@ def get_installed_images(docker: str) -> Set[str]:
 
     return env_names
 
-def get_envs_with_install_info(envs: List[Env], presets: List[str], images: List[str]) -> Dict[str, EnvWithInstallInfo]:
+def get_envs_with_install_info(
+    envs: List[Env],
+    presets: List[str],
+    images: List[str],
+    installed_addons: Dict[str, List[str]],
+) -> Dict[str, EnvWithInstallInfo]:
     envs_with_install_info = [
         {
             **env,
             "preset_installed": env["name"] in presets,
             "image_installed": env["name"] in images,
+            "addons": installed_addons.get(env["name"]),
         }
         for env in envs
     ]
@@ -58,40 +67,54 @@ def get_envs_with_install_info(envs: List[Env], presets: List[str], images: List
 
 def print_env_list(envs: List[EnvWithInstallInfo]) -> None:
     max_env_length = max(len(env["name"]) for env in envs)
-    row_format = "{:<"+str(max_env_length)+"} {:<10} {:<10}"
-    print(row_format.format("ENV", "PRESET", "IMAGE"))
+    row_format = "{:<"+str(max_env_length)+"} {:<10} {:<10} {}"
+    print(row_format.format("ENV", "PRESET", "IMAGE", "ADDONS"))
     for env in envs:
         print(row_format.format(
             env["name"],
             "x" if env["preset_installed"] else "",
             "x" if env["image_installed"] else "",
+            ",".join(env["addons"]) if env["addons"] is not None else "",
         ))
 
-def install_env(preset_installation_dir: str, docker: str, envs: List[EnvWithInstallInfo], env_name: str) -> None:
+def install_env(
+    preset_installation_dir: str,
+    docker: str,
+    addons_config_dir: str,
+    envs: List[EnvWithInstallInfo],
+    available_addons: List[Addon],
+    env_name: str,
+    addon_names: List[str],
+) -> None:
     def install_env_preset(env: EnvWithInstallInfo) -> None:
         with open(os.path.join(preset_installation_dir, env["name"]), "w") as preset_file:
-            preset_file.writelines(env["preset"])
+            preset_file.write("\n".join(env["preset"]))
 
-    def install_env_image(env: EnvWithInstallInfo) -> None:
+    def install_env_image(env: EnvWithInstallInfo, addons: List[Addon]) -> None:
         if env["base_env"] is not None:
             base_env = find(lambda x: x["name"] == env["base_env"], envs)
             if not base_env["image_installed"]:
-                install_env_image(base_env)
+                install_env_image(base_env, [])
 
+        compiled_dockerfile = "\n".join([env["dockerfile"]] + [addon["dockerfile"] for addon in addons])
         completed_process = subprocess.run(
             [docker, "build", "-t", env["name"], "-"],
-            input=env["dockerfile"],
+            input=compiled_dockerfile,
             check=True,
             encoding="utf-8",
             env={**os.environ, "DOCKER_BUILDKIT": "1"},
         )
+        with open(os.path.join(addons_config_dir, env["name"]), "w") as addons_config_file:
+            addons_config_file.write("\n".join(addon["name"] for addon in addons))
 
     env_to_install = find(lambda env: env["name"] == env_name, envs)
+    addon_names_set = set(addon_names)  # performance for membership check
+    addons_to_install = [addon for addon in available_addons if addon["name"] in addon_names_set]
 
     if not env_to_install["preset_installed"]:
         install_env_preset(env_to_install)
     if not env_to_install["image_installed"]:
-        install_env_image(env_to_install)
+        install_env_image(env_to_install, addons_to_install)
 
 def remove_env(preset_installation_dir: str, docker: str, envs: List[EnvWithInstallInfo], env_name: str) -> None:
     def remove_env_preset(env: EnvWithInstallInfo) -> None:
@@ -112,6 +135,30 @@ def remove_env(preset_installation_dir: str, docker: str, envs: List[EnvWithInst
     if env_to_remove["image_installed"]:
         remove_env_image(env_to_remove)
 
+def get_available_addons(env_repository_dir: str) -> List[Addon]:
+    addons = []
+
+    for addon_file_path in glob.glob(f"{env_repository_dir}/addons/*.Dockerfile"):
+        with open(addon_file_path, "r") as addon_dockerfile:
+            addon_file_name = os.path.basename(addon_file_path)
+            addon_name, file_name_extension = os.path.splitext(addon_file_name)
+
+            addons.append({
+                "name": addon_name,
+                "dockerfile": addon_dockerfile.read(),
+            })
+
+    return addons
+
+def get_installed_addons(addons_config_dir: str) -> Dict[str, List[str]]:
+    installed_addons = {}
+
+    for env_name in os.listdir(addons_config_dir):
+        with open(os.path.join(addons_config_dir, env_name), "r") as addons_config:
+            installed_addons[env_name] = addons_config.readlines()
+
+    return installed_addons
+
 def main():
     docker = shutil.which("docker")
     if not docker:
@@ -121,11 +168,20 @@ def main():
         sys.exit("'x11docker' not found in PATH, please install x11docker: https://github.com/mviereck/x11docker")
     env_repository_dir = os.path.dirname(os.path.abspath(__file__))
     preset_installation_dir = os.path.expanduser(X11DOCKER_PRESET_DIR)
+    addons_config_dir = os.path.expanduser(ADDONS_CONFIG_DIR)
+    os.makedirs(addons_config_dir, exist_ok=True)
     
     available_envs = get_available_envs(env_repository_dir)
+    available_addons = get_available_addons(env_repository_dir)
     installed_presets = get_installed_presets(preset_installation_dir)
     installed_images = get_installed_images(docker)
-    envs_with_install_info = get_envs_with_install_info(available_envs, installed_presets, installed_images)
+    installed_addons = get_installed_addons(addons_config_dir)
+    envs_with_install_info = get_envs_with_install_info(
+        envs=available_envs,
+        presets=installed_presets,
+        images=installed_images,
+        installed_addons=installed_addons,
+    )
 
     root_parser = argparse.ArgumentParser()
     root_parser.set_defaults(func=lambda args: root_parser.print_help())
@@ -147,11 +203,20 @@ def main():
 
     install_parser = subparsers.add_parser("install")
     install_parser.add_argument("install_name", metavar="env", help="name of env to install")
+    install_parser.add_argument(
+        "install_addons",
+        metavar="...",
+        nargs=argparse.REMAINDER,
+        help="list of addons to add to the image (separate with whitespace)",
+    )
     install_parser.set_defaults(func=lambda args: install_env(
         preset_installation_dir=preset_installation_dir,
         docker=docker,
+        addons_config_dir=addons_config_dir,
         envs=envs_with_install_info,
+        available_addons=available_addons,
         env_name=args.install_name,
+        addon_names=args.install_addons,
     ))
 
     remove_parser = subparsers.add_parser("remove")
@@ -162,6 +227,12 @@ def main():
         envs=envs_with_install_info,
         env_name=args.remove_name,
     ))
+
+    addons_parser = subparsers.add_parser("addons")
+    def handle_addons(args):
+        for addon in available_addons:
+            print(addon["name"])
+    addons_parser.set_defaults(func=handle_addons)
 
     args = root_parser.parse_args()
     args.func(args)
