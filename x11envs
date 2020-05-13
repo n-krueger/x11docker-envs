@@ -133,7 +133,11 @@ def main():
     subparsers = root_parser.add_subparsers(title='subcommands')
 
     list_parser = subparsers.add_parser("list")
-    list_parser.add_argument("list_choice", choices=["available", "installed"])
+    list_parser.add_argument(
+        "list_choice",
+        choices=["available", "installed"],
+        help="'available' displays all defined envs, 'installed' displays only installed envs"
+    )
     def handle_list(args):
         if args.list_choice == "available":
             print_env_list(envs_with_install_info)
@@ -142,7 +146,7 @@ def main():
     list_parser.set_defaults(func=handle_list)
 
     install_parser = subparsers.add_parser("install")
-    install_parser.add_argument("install_name")
+    install_parser.add_argument("install_name", metavar="env", help="name of env to install")
     install_parser.set_defaults(func=lambda args: install_env(
         preset_installation_dir=preset_installation_dir,
         docker=docker,
@@ -151,7 +155,7 @@ def main():
     ))
 
     remove_parser = subparsers.add_parser("remove")
-    remove_parser.add_argument("remove_name")
+    remove_parser.add_argument("remove_name", metavar="env", help="name of env to remove")
     remove_parser.set_defaults(func=lambda args: remove_env(
         preset_installation_dir=preset_installation_dir,
         docker=docker,
