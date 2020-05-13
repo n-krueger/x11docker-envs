@@ -155,7 +155,7 @@ def get_installed_addons(addons_config_dir: str) -> Dict[str, List[str]]:
 
     for env_name in os.listdir(addons_config_dir):
         with open(os.path.join(addons_config_dir, env_name), "r") as addons_config:
-            installed_addons[env_name] = addons_config.readlines()
+            installed_addons[env_name] = [x.strip() for x in addons_config.readlines()]
 
     return installed_addons
 
