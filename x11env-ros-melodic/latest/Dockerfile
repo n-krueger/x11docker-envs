@@ -44,7 +44,7 @@ RUN apt-get update && apt-mark hold iptables && \
       mesa-utils-extra && \
     sed -i 's%<property name="ThemeName" type="string" value="Xfce"/>%<property name="ThemeName" type="string" value="Raleigh"/>%' /etc/xdg/xfce4/xfconf/xfce-perchannel-xml/xsettings.xml
 
-CMD ["startxfce4"]
+CMD ["xfce4-terminal"]
 
 # ros:melodic-ros-base-bionic understandably does not include the full desktop package
 RUN apt-get update && apt-get install -y \
