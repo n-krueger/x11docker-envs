@@ -78,3 +78,6 @@ The home directories of development environments are mounted to `~/x11docker/<en
 ### NVIDIA GPU acceleration
 Utilizing NVIDIA GPUs requires the NVIDIA drivers to be installed inside the development environment. The x11docker
 wiki explains how to achieve this: https://github.com/mviereck/x11docker/wiki/NVIDIA-driver-support-for-docker-container#automated-install-of-nvidia-driver-during-container-startup
+
+## Addons
+COMING SOON
