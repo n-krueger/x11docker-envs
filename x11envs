@@ -168,6 +168,7 @@ def main():
         sys.exit("'x11docker' not found in PATH, please install x11docker: https://github.com/mviereck/x11docker")
     env_repository_dir = os.path.dirname(os.path.abspath(__file__))
     preset_installation_dir = os.path.expanduser(X11DOCKER_PRESET_DIR)
+    os.makedirs(preset_installation_dir, exist_ok=True)
     addons_config_dir = os.path.expanduser(ADDONS_CONFIG_DIR)
     os.makedirs(addons_config_dir, exist_ok=True)
     
